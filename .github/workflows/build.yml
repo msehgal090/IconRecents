@@ -16,32 +16,37 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. JDK 17 ────────────────────────────────────────────────────────────
+      # ── 2. JDK 17 (setup-java v5) ────────────────────────────────────────────
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
           cache: gradle
 
-      # ── 3. Gradle (no wrapper jar needed — version pinned here) ──────────────
+      # ── 3. Gradle 8.9 (no wrapper jar needed) ────────────────────────────────
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
-      # ── 4. Download XposedBridge API jar ─────────────────────────────────────
-      #   The module uses `compileOnly("de.robv.android.xposed:api:82")` from
-      #   https://api.xposed.info/  — if that repo is unreachable in CI we fall
-      #   back to a manually downloaded jar placed in app/libs/.
-      - name: Download XposedBridge API (fallback jar)
-        continue-on-error: true   # Build still proceeds without it if Maven repo works
+      # ── 4. XposedBridge API jar ───────────────────────────────────────────────
+      #   Try two reliable sources. If both fail, Gradle will fall back to the
+      #   api.xposed.info Maven repo declared in settings.gradle.kts.
+      - name: Download XposedBridge API jar
+        continue-on-error: true
         run: |
           mkdir -p app/libs
-          curl --fail --location \
+          echo "Attempting to download XposedBridge api-82.jar..."
+          # Source 1 — official Xposed info Maven
+          curl --fail --silent --location \
             "https://api.xposed.info/xposed/api/82/api.jar" \
-            -o app/libs/api-82.jar \
-            || echo "⚠️  XposedBridge jar not downloaded — Maven repo will be used instead"
+            -o app/libs/api-82.jar && echo "✅ Downloaded from api.xposed.info" && exit 0
+          # Source 2 — JitPack hosted snapshot
+          curl --fail --silent --location \
+            "https://jitpack.io/com/github/rovo98/XposedBridge/82.0/XposedBridge-82.0.jar" \
+            -o app/libs/api-82.jar && echo "✅ Downloaded from JitPack" && exit 0
+          echo "⚠️  Jar download failed — Gradle will use Maven repo directly"
 
       # ── 5. Build ─────────────────────────────────────────────────────────────
       - name: Build debug APK

@@ -55,8 +55,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     // XposedBridge API — compileOnly (provided by LSPosed/VirtualXposed at runtime)
-    // Primary: Maven repo
-    compileOnly("de.robv.android.xposed:api:82")
-    // Fallback: place api-82.jar in app/libs/ if the repo is unavailable
+    // isTransitive=false avoids pulling in broken transitive deps from api.xposed.info
+    compileOnly("de.robv.android.xposed:api:82") { isTransitive = false }
+    // Fallback: place api-82.jar in app/libs/ — CI downloads it automatically
     compileOnly(fileTree("libs") { include("*.jar") })
 }

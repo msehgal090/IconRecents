@@ -3,4 +3,6 @@
     <!-- Base dark colour for the panel — #CC = 80 % opacity -->
     <color name="panelBackground">#CC1C1C1E</color>
     <color name="colorAccent">#FF6B6B</color>
+    <!-- Launcher icon background -->
+    <color name="ic_launcher_background">#FF1A237E</color>
 </resources>

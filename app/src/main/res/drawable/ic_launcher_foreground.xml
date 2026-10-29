@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    App launcher icon — a 2x2 grid of rounded squares representing "recent apps"
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Top-left square -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,24 Q24,20 28,20 L48,20 Q52,20 52,24 L52,44 Q52,48 48,48 L28,48 Q24,48 24,44 Z"/>
+    <!-- Top-right square -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M56,24 Q56,20 60,20 L80,20 Q84,20 84,24 L84,44 Q84,48 80,48 L60,48 Q56,48 56,44 Z"/>
+    <!-- Bottom-left square -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,56 Q24,52 28,52 L48,52 Q52,52 52,56 L52,76 Q52,80 48,80 L28,80 Q24,80 24,76 Z"/>
+    <!-- Bottom-right square -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M56,56 Q56,52 60,52 L80,52 Q84,52 84,56 L84,76 Q84,80 80,80 L60,80 Q56,80 56,76 Z"/>
+
+</vector>
