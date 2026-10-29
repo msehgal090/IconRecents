@@ -3,10 +3,18 @@
     <!--
         LSPosed module scope — which packages this module is allowed to hook.
         Referenced by: AndroidManifest meta-data "xposedscope"
+
+        Includes:
+          com.android.systemui        — 3-button nav recents hook (HOOK A/B)
+          com.android.launcher3       — gesture nav recents hook (HOOK C) / Trebuchet base
+          com.lineageos.trebuchet     — explicit Trebuchet package (some LineageOS builds)
+          com.android.launcher        — AOSP launcher fallback
+          com.google.android.apps.nexuslauncher — Pixel/GMS launcher
     -->
     <string-array name="xposed_scope">
         <item>com.android.systemui</item>
         <item>com.android.launcher3</item>
+        <item>com.lineageos.trebuchet</item>
         <item>com.android.launcher</item>
         <item>com.google.android.apps.nexuslauncher</item>
     </string-array>

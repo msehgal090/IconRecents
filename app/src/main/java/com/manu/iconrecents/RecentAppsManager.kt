@@ -5,137 +5,237 @@ import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.concurrent.TimeUnit
 
-/**
- * Represents a single app from the recents stack.
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// Data model
+// ─────────────────────────────────────────────────────────────────────────────
+
 data class RecentApp(
     val packageName: String,
     val icon: Drawable,
     val label: String
 )
 
+// ─────────────────────────────────────────────────────────────────────────────
+// RecentAppsManager
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
  * Handles all root-shell interactions:
- *  - Fetching recent tasks via `dumpsys activity recents`
+ *  - Fetching recent tasks (multi-source, Android 15 compatible)
  *  - Force-stopping individual or all apps
+ *
+ * ### Parsing strategy (in priority order)
+ *
+ * Source A — `dumpsys activity recents`
+ *   Pattern 1: `realActivity=com.pkg/.Activity`          (Android 14-15, most reliable)
+ *   Pattern 2: `cmp=com.pkg/.Activity`                   (inside baseIntent/intent={})
+ *   Pattern 3: `* Hist #N: ActivityRecord{...} u0 com.pkg/.Activity`
+ *
+ * Source B — `dumpsys activity activities`  (fallback if Source A yields < 2 apps)
+ *   Pattern:   `ActivityRecord{...} u0 com.pkg/.Activity`
  */
 object RecentAppsManager {
 
-    /** Packages that should never appear in our recents list */
+    // ── Exclusions ────────────────────────────────────────────────────────────
+
     private val EXCLUDED_PACKAGES = setOf(
         "com.android.systemui",
         "com.android.launcher",
         "com.android.launcher2",
         "com.android.launcher3",
         "com.google.android.apps.nexuslauncher",
-        "com.manu.iconrecents"   // ourselves
+        "com.lineageos.trebuchet",
+        "com.manu.iconrecents"           // ourselves
     )
 
-    /** Keywords that identify a launcher/home package */
-    private val LAUNCHER_KEYWORDS = listOf("launcher", "homescreen", "trebuchet")
+    private val EXCLUDED_KEYWORDS = listOf(
+        "launcher", "trebuchet", "homescreen", "home.screen"
+    )
+
+    // ── Regex patterns ────────────────────────────────────────────────────────
+
+    /** realActivity=com.pkg/.Activity  — primary Android 15 format */
+    private val REAL_ACTIVITY_RE =
+        Regex("""realActivity=([a-zA-Z][a-zA-Z0-9_.]+)/""")
+
+    /** cmp=com.pkg/.Activity  — inside baseIntent / intent={} lines */
+    private val CMP_RE =
+        Regex("""cmp=([a-zA-Z][a-zA-Z0-9_.]+)/""")
+
+    /**
+     * Hist #N: ActivityRecord{hash} u0 com.pkg/.Activity tN
+     * Works in both `recents` and `activities` output.
+     */
+    private val HIST_RECORD_RE =
+        Regex("""Hist\s+#\d+:\s+ActivityRecord\{[^}]+}\s+u\d+\s+([a-zA-Z][a-zA-Z0-9_.]+)/""")
+
+    /** Bare ActivityRecord line (no "Hist" prefix) — in `activities` output */
+    private val BARE_RECORD_RE =
+        Regex("""ActivityRecord\{[^}]+}\s+u\d+\s+([a-zA-Z][a-zA-Z0-9_.]+)/""")
 
     // ─────────────────────────────────────────────────────────────────────────
     // Public API
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Returns a list of [RecentApp] objects by:
-     * 1. Running `su -c dumpsys activity recents` in the background.
-     * 2. Parsing package names from the output.
-     * 3. Loading icons from [PackageManager].
+     * Returns the list of [RecentApp] objects using multi-source parsing.
+     * Runs on [Dispatchers.IO].
      */
-    suspend fun getRecentApps(context: Context): List<RecentApp> = withContext(Dispatchers.IO) {
-        val packageNames = fetchRecentPackages()
-        val pm = context.packageManager
-
-        packageNames.mapNotNull { pkg ->
-            try {
-                val info = pm.getApplicationInfo(pkg, 0)
-                val icon = pm.getApplicationIcon(info)
-                val label = pm.getApplicationLabel(info).toString()
-                RecentApp(pkg, icon, label)
-            } catch (_: PackageManager.NameNotFoundException) {
-                null // App may have been uninstalled; skip it
-            }
+    suspend fun getRecentApps(context: Context): List<RecentApp> =
+        withContext(Dispatchers.IO) {
+            val pkgs = fetchPackages()
+            val pm = context.packageManager
+            pkgs.mapNotNull { pkg -> resolveApp(pm, pkg) }
         }
+
+    /** Force-stop a single package via root shell. */
+    suspend fun forceStopApp(pkg: String) = withContext(Dispatchers.IO) {
+        shell("am force-stop $pkg")
     }
 
     /**
-     * Force-stops a single package via root shell.
-     */
-    suspend fun forceStopApp(packageName: String) = withContext(Dispatchers.IO) {
-        runShell("am force-stop $packageName")
-    }
-
-    /**
-     * Force-stops every package in the list (for "Clear All").
+     * Force-stop every package in the list (Clear All).
+     * Chains commands in one su session for efficiency.
      */
     suspend fun clearAllApps(packages: List<String>) = withContext(Dispatchers.IO) {
         if (packages.isEmpty()) return@withContext
-        // Chain all commands in one su session for efficiency
-        val cmd = packages.joinToString(" && ") { "am force-stop $it" }
-        runShell(cmd)
+        val cmd = packages.joinToString(" ; ") { "am force-stop $it" }
+        shell(cmd)
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Private helpers
+    // Fetching
     // ─────────────────────────────────────────────────────────────────────────
 
-    private fun fetchRecentPackages(): List<String> = try {
-        val output = runShellWithOutput("dumpsys activity recents")
-        parseRecentPackages(output)
-    } catch (_: Exception) {
-        emptyList()
+    private fun fetchPackages(): List<String> {
+        // Source A: dumpsys activity recents  ──────────────────────────────────
+        val recentsOutput = shellRead("dumpsys activity recents")
+        val fromRecents = parseRecents(recentsOutput)
+
+        // Source B: dumpsys activity activities (fallback / supplement) ─────────
+        // Use when recents returns 0 or 1 result (parser may have missed entries)
+        val combined: List<String> = if (fromRecents.size >= 2) {
+            fromRecents
+        } else {
+            val activitiesOutput = shellRead("dumpsys activity activities")
+            val fromActivities = parseActivities(activitiesOutput)
+            // Merge: recents first (ordered by recency), then any extra from activities
+            (fromRecents + fromActivities.filter { it !in fromRecents })
+        }
+
+        return combined
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Parsers
+    // ─────────────────────────────────────────────────────────────────────────
 
     /**
      * Parses `dumpsys activity recents` output.
      *
-     * Each recent task block contains a line like:
-     *   baseIntent=Intent { ... cmp=com.example.app/.MainActivity }
-     *
-     * We extract the package from `cmp=<package>/<activity>`.
+     * Handles all known Android 11-15 line formats in a single pass.
      */
-    internal fun parseRecentPackages(dumpsysOutput: String): List<String> {
-        val packages = mutableListOf<String>()
-        // Matches: cmp=com.example.app/
-        val cmpRegex = Regex("""cmp=([a-zA-Z][a-zA-Z0-9_.]+)/""")
+    internal fun parseRecents(output: String): List<String> {
+        val result = mutableListOf<String>()
 
-        for (line in dumpsysOutput.lines()) {
-            if (!line.contains("baseIntent=") || !line.contains("cmp=")) continue
+        for (raw in output.lines()) {
+            val line = raw.trim()
 
-            val match = cmpRegex.find(line) ?: continue
-            val pkg = match.groupValues[1]
+            // Pattern 1 — realActivity= (Android 14-15, highest confidence)
+            REAL_ACTIVITY_RE.find(line)?.groupValues?.get(1)
+                ?.takeIf { isEligible(it) }
+                ?.let { if (it !in result) result.add(it) }
 
-            if (pkg !in EXCLUDED_PACKAGES &&
-                pkg !in packages &&
-                !isLauncherPackage(pkg)
-            ) {
-                packages.add(pkg)
+            // Pattern 2 — cmp= inside intent block
+            if (line.contains("cmp=")) {
+                CMP_RE.find(line)?.groupValues?.get(1)
+                    ?.takeIf { isEligible(it) }
+                    ?.let { if (it !in result) result.add(it) }
+            }
+
+            // Pattern 3 — Hist ActivityRecord line
+            if (line.contains("Hist") && line.contains("ActivityRecord")) {
+                HIST_RECORD_RE.find(line)?.groupValues?.get(1)
+                    ?.takeIf { isEligible(it) }
+                    ?.let { if (it !in result) result.add(it) }
             }
         }
-        return packages
-    }
 
-    private fun isLauncherPackage(pkg: String): Boolean =
-        LAUNCHER_KEYWORDS.any { pkg.contains(it, ignoreCase = true) }
-
-    /**
-     * Runs a command via `su -c` and returns stdout.
-     */
-    private fun runShellWithOutput(command: String): String {
-        val process = Runtime.getRuntime().exec(arrayOf("su", "-c", command))
-        val output = process.inputStream.bufferedReader().readText()
-        process.waitFor()
-        return output
+        return result
     }
 
     /**
-     * Runs a command via `su -c` and discards stdout (fire-and-forget).
+     * Parses `dumpsys activity activities` output.
+     *
+     * Extracts running activities from the task stack.
+     * This reflects what is CURRENTLY running (not just the recents history).
      */
-    private fun runShell(command: String) {
-        val process = Runtime.getRuntime().exec(arrayOf("su", "-c", command))
-        process.waitFor()
+    internal fun parseActivities(output: String): List<String> {
+        val result = mutableListOf<String>()
+
+        for (raw in output.lines()) {
+            val line = raw.trim()
+            if (!line.contains("ActivityRecord")) continue
+
+            // Try Hist-prefixed format first, then bare format
+            val pkg = HIST_RECORD_RE.find(line)?.groupValues?.get(1)
+                ?: BARE_RECORD_RE.find(line)?.groupValues?.get(1)
+                ?: continue
+
+            if (isEligible(pkg) && pkg !in result) result.add(pkg)
+        }
+
+        return result
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private fun isEligible(pkg: String): Boolean =
+        pkg !in EXCLUDED_PACKAGES &&
+        EXCLUDED_KEYWORDS.none { pkg.contains(it, ignoreCase = true) }
+
+    private fun resolveApp(pm: PackageManager, pkg: String): RecentApp? = try {
+        val info = pm.getApplicationInfo(pkg, 0)
+        RecentApp(
+            packageName = pkg,
+            icon = pm.getApplicationIcon(info),
+            label = pm.getApplicationLabel(info).toString()
+        )
+    } catch (_: PackageManager.NameNotFoundException) {
+        null   // App uninstalled since last run
+    }
+
+    /**
+     * Runs [command] via `su -c` and returns stdout.
+     * Times out after [timeoutSec] seconds to prevent UI hangs.
+     */
+    private fun shellRead(command: String, timeoutSec: Long = 10L): String = try {
+        val proc = Runtime.getRuntime().exec(arrayOf("su", "-c", command))
+        // Read stderr concurrently so it doesn't block stdout
+        val stderrThread = Thread { proc.errorStream.bufferedReader().readText() }
+        stderrThread.isDaemon = true
+        stderrThread.start()
+
+        val output = proc.inputStream.bufferedReader().readText()
+        proc.waitFor(timeoutSec, TimeUnit.SECONDS)
+        proc.destroy()
+        output
+    } catch (_: Exception) {
+        ""
+    }
+
+    /**
+     * Runs [command] via `su -c` (fire-and-forget, output discarded).
+     */
+    private fun shell(command: String) {
+        try {
+            val proc = Runtime.getRuntime().exec(arrayOf("su", "-c", command))
+            proc.waitFor(10L, TimeUnit.SECONDS)
+            proc.destroy()
+        } catch (_: Exception) { /* ignore */ }
     }
 }
