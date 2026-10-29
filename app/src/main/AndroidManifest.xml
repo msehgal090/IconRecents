@@ -27,17 +27,17 @@
             android:showOnLockScreen="true"
             android:screenOrientation="portrait">
 
-            <!-- Intent launched by Xposed hook or shortcut/adb -->
+            <!--
+                Explicit action so any process (Xposed hook, shortcut, adb) can
+                start this activity by component name OR by action.
+                android:exported="true" above already allows cross-process launch
+                by component; this filter is kept for adb / tasker convenience.
+            -->
             <intent-filter>
                 <action android:name="com.manu.iconrecents.SHOW_RECENTS" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
 
-            <!-- Also handle the home/recent button broadcasts (LSPosed scope) -->
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
         </activity>
 
         <!-- ═══════════════════════════════════════════

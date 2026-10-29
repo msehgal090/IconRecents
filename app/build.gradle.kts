@@ -17,9 +17,10 @@ android {
 
     buildTypes {
         debug {
+            // ⚠️  No applicationIdSuffix — Xposed hooks reference the package name
+            // at runtime. Debug + release must share "com.manu.iconrecents" so the
+            // hook's startActivity() resolves correctly on the device.
             isDebuggable = true
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
         }
         release {
             isMinifyEnabled = true
