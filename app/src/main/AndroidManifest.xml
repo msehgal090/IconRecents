@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Root shell execution needs no special permission, but overlay helps -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.IconRecents">
+
+        <!--
+            RecentsActivity — transparent popup shown over everything.
+            excludeFromRecents: won't appear in system recents itself.
+            taskAffinity="": isolated task so it won't merge with caller.
+        -->
+        <activity
+            android:name=".RecentsActivity"
+            android:exported="true"
+            android:launchMode="singleInstance"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.IconRecents.Popup"
+            android:showOnLockScreen="true"
+            android:screenOrientation="portrait">
+
+            <!-- Intent launched by Xposed hook or shortcut/adb -->
+            <intent-filter>
+                <action android:name="com.manu.iconrecents.SHOW_RECENTS" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+
+            <!-- Also handle the home/recent button broadcasts (LSPosed scope) -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- ═══════════════════════════════════════════
+             LSPosed / Classic Xposed Module Metadata
+             ═══════════════════════════════════════════ -->
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="Replaces system Recents with an icon-only popup grid (IconRecents)" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="53" />
+        <!-- LSPosed scope: which packages this module may hook -->
+        <meta-data
+            android:name="xposedscope"
+            android:resource="@array/xposed_scope" />
+
+    </application>
+</manifest>

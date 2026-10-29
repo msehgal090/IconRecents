@@ -1,0 +1,57 @@
+name: Build Debug APK
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Assemble Debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. JDK 17 ────────────────────────────────────────────────────────────
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      # ── 3. Gradle (no wrapper jar needed — version pinned here) ──────────────
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      # ── 4. Download XposedBridge API jar ─────────────────────────────────────
+      #   The module uses `compileOnly("de.robv.android.xposed:api:82")` from
+      #   https://api.xposed.info/  — if that repo is unreachable in CI we fall
+      #   back to a manually downloaded jar placed in app/libs/.
+      - name: Download XposedBridge API (fallback jar)
+        continue-on-error: true   # Build still proceeds without it if Maven repo works
+        run: |
+          mkdir -p app/libs
+          curl --fail --location \
+            "https://api.xposed.info/xposed/api/82/api.jar" \
+            -o app/libs/api-82.jar \
+            || echo "⚠️  XposedBridge jar not downloaded — Maven repo will be used instead"
+
+      # ── 5. Build ─────────────────────────────────────────────────────────────
+      - name: Build debug APK
+        run: gradle :app:assembleDebug --stacktrace --no-daemon
+
+      # ── 6. Upload artifact ───────────────────────────────────────────────────
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: IconRecents-debug-${{ github.run_number }}-${{ github.sha }}
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+          if-no-files-found: error

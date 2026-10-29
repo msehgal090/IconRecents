@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">IconRecents</string>
+    <string name="clear_all">Clear All</string>
+    <string name="no_recent_apps">No recent apps</string>
+    <string name="cannot_launch">Cannot launch app</string>
+</resources>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base dark colour for the panel — #CC = 80 % opacity -->
+    <color name="panelBackground">#CC1C1C1E</color>
+    <color name="colorAccent">#FF6B6B</color>
+</resources>
